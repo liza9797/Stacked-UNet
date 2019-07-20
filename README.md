@@ -1,9 +1,9 @@
-# Stacked UNet (pytorch)
+# Stacked U-Net (pytorch)
 
-This is pytorch implementation of UNet, ResUNet and Stacked UNet.
+This is pytorch implementation of U-Net, Residual U-Net and Stacked U-Net.
 
 Original pepers:
 
-* [UNet](https://arxiv.org/abs/1505.04597)
+* [U-Net](https://arxiv.org/abs/1505.04597)
 
-* [Stacked UNet](https://arxiv.org/abs/1804.10343)
+* [Stacked U-Net](https://arxiv.org/abs/1804.10343)
