@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+CONV_TYPE = {'single': 1, 'double': 2, 'triple': 3}
 
 class ConvBlock(nn.Module):
     r""" The basic convolutional block with activations.
@@ -24,9 +25,8 @@ class ConvBlock(nn.Module):
             'double' or 'triple', it is once or twice complemented by convolutional layer with kernel_size=3 
             and choosen dilation with corresponding padding, followed by activation.
             
-        dilation: int (default 1)
-            The dilathion for the second convolutional layer for conv_type='double' and for the second and the third 
-            convolutional layers for conv_type='triple'.
+        dilation: int (default 1) or list
+            The dilations for the convolutional layers.
             
         activation: 'relu', 'prelu' or 'leaky_relu' (default 'relu')
             Defines the type of the activation function.
@@ -38,8 +38,14 @@ class ConvBlock(nn.Module):
 
         super().__init__()
         
-        self.conv_single = nn.Conv2d(in_channels, out_channels, 3, padding=1)
-        self.conv_layer = nn.Conv2d(out_channels, out_channels, 3, padding=dilation, dilation=dilation)
+        self.num_convs = CONV_TYPE[conv_type]
+        self.conv_layers = nn.ModuleList([])
+        
+        if isinstance(dilation, int):
+            dilation = [dilation] * self.num_convs
+        for i in range(self.num_convs):
+            self.conv_layers.append(nn.Conv2d(in_channels, out_channels, 3, padding=dilation[i], dilation=dilation[i]))
+            in_channels = out_channels
         
         if activation == 'leaky_relu':
             self.activation = nn.LeakyReLU(inplace=True)
@@ -47,18 +53,16 @@ class ConvBlock(nn.Module):
             self.activation = nn.PReLU()
         else:
             self.activation = nn.ReLU(inplace=True)
-        
-        self.conv_type = conv_type
+
         self.residual = residual
         
     def forward(self, x):
-        x = self.activation(self.conv_single(x))
-    
-        if self.conv_type != 'single':
-            x_out = x.clone()
-            x = self.activation(self.conv_layer(x))
-            if self.conv_type == 'triple':
-                x = self.activation(self.conv_layer(x))
+        for i in range(self.num_convs):
+            if i == 1 and self.residual:
+                x_out = x.clone()
+            
+            x = self.activation(self.conv_layers[i](x))
+
         if self.residual:
             return x_out + x
         else:
@@ -68,7 +72,7 @@ class UNet(nn.Module):
     r""" The basic UNet block. It can be used as completed model or as a part of the Stacked UNet model.
     """
     
-    def __init__(self, in_channels, num_classes, conv_type='double', residual=False, depth=4, 
+    def __init__(self, in_channels, out_channels, conv_type='double', residual=False, depth=4, 
                  activation='relu', dilation=1, is_block=False, upsample_type='upsample', **kwargs):
         r"""
         
@@ -78,7 +82,7 @@ class UNet(nn.Module):
         in_channels: int
             The number of channels in the input image.
             
-        num_classes: int
+        out_channels: int
             The number of channels in the output mask. Each channel corresponds to one of the classes and contains
             a mask of probabilities for image pixels to belong to this class.
             
@@ -97,9 +101,8 @@ class UNet(nn.Module):
         activation: 'relu', 'prelu' or 'leaky_relu' (default 'relu')
             Defines the type of the activation function in the model's convolutional blocks.
         
-        dilation: int (default 1)
-            The dilathion for the model's blocks second convolutional layer for conv_type='double' and for the second
-            and the third convolutional layers for conv_type='triple'.
+        dilation: int (default 1) or list
+            The dilation for the model's blocks convolutional layers.
             
         is_block: bool (default False)
             It should be set to True if the model is used as a block in Stacked UNet model. 
@@ -147,8 +150,9 @@ class UNet(nn.Module):
 
         if activation not in ['relu', 'prelu', 'leaky_relu']:
             raise ValueError("The activation for convolution blocks is expected to be 'relu', 'prelu' or 'leaky_relu'.")
-        if dilation not in [1, 2, 3]:
-            raise ValueError("The dilation for convolution blocks is expected to be 1, 2 or 3.")
+        if isinstance(dilation, int):
+            if dilation not in [1, 2, 3]:
+                raise ValueError("The dilation for convolution blocks is expected to be 1, 2 or 3.")
         if upsample_type not in ['upsample', 'convtranspose']:
             raise ValueError("The upsample type is expected to be Upsampling or ConvTranspose.")
             
@@ -200,7 +204,7 @@ class UNet(nn.Module):
                                      residual=residual, activation=activation, dilation=dilation)
         if not is_block:
             self.conv_last = nn.Conv2d(inverse_channels_sequence[-1], 
-                                                      num_classes, 3, padding=1)
+                                                      out_channels, 3, padding=1)
      
         self.maxpool = nn.MaxPool2d(2)
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)  
@@ -212,14 +216,14 @@ class UNet(nn.Module):
             x = conv_block(x)
             encoding.append(x)
             x = self.maxpool(x)
-            
+         
         x = self.conv_middle(x)
         
         for i, conv_block in enumerate(self.conv_up):
             x = self.upsample(x)
             x = torch.cat([x, encoding[::-1][i]], dim=1)
             x = conv_block(x)
-        
+            
         if not self.is_block:
             x = self.conv_last(x)
    
